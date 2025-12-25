@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1f2937">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Notre Cinéthèque</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body { overscroll-behavior-y: contain; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div id="root"></div>
+
+    <script type="module">
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyBFN56hOHMO0yOOiKxFCr2hU6trRnqf3jQ",
+            authDomain: "watchpartychou.firebaseapp.com",
+            databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "watchpartychou",
+            storageBucket: "watchpartychou.firebasestorage.app",
+            messagingSenderId: "637056600674",
+            appId: "1:637056600674:web:646e05e69315579a411f3b"
+        };
+
+        // Icônes SVG
+        const icons = {
+            film: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M3 7.5h4M3 12h18M3 16.5h4M17 3v18M17 7.5h4M17 16.5h4"/></svg>',
+            tv: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="15" x="2" y="7" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>',
+            search: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+            star: (filled) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>`,
+            plus: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5v14"/></svg>',
+            x: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+            chevronDown: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>',
+            chevronRight: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>',
+            refresh: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>',
+            trash: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
+            trending: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+            cloud: '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>'
+        };
+
+        // État de l'application
+        let state = {
+            view: 'home',
+            collection: [],
+            searchQuery: '',
+            searchResults: [],
+            isSearching: false,
+            isLoading: true,
+            isSyncing: false,
+            selectedItem: null,
+            showRatingModal: false,
+            expandedSeasons: {}
+        };
+
+        // Fonctions Firebase
+        async function loadCollection() {
+            state.isLoading = true;
+            render();
+            try {
+                const response = await fetch(`${firebaseConfig.databaseURL}/collection.json`);
+                if (response.ok) {
+                    const data = await response.json();
+                    state.collection = data || [];
+                    localStorage.setItem('collectionCache', JSON.stringify(state.collection));
+                }
+            } catch (error) {
+                console.error('Erreur de chargement:', error);
+                const cached = localStorage.getItem('collectionCache');
+                if (cached) state.collection = JSON.parse(cached);
+            }
+            state.isLoading = false;
+            render();
+        }
+
+        async function saveCollection() {
+            state.isSyncing = true;
+            render();
+            try {
+                const response = await fetch(`${firebaseConfig.databaseURL}/collection.json`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(state.collection)
+                });
+                if (response.ok) {
+                    localStorage.setItem('collectionCache', JSON.stringify(state.collection));
+                }
+            } catch (error) {
+                console.error('Erreur de sauvegarde:', error);
+                alert('Erreur de synchronisation');
+            }
+            state.isSyncing = false;
+            render();
+        }
+
+        // Recherche OMDb
+        async function searchMedia() {
+            if (!state.searchQuery.trim()) return;
+            state.isSearching = true;
+            render();
+            try {
+                const res = await fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&s=${encodeURIComponent(state.searchQuery)}`);
+                const data = await res.json();
+                if (data.Response === 'True') {
+                    const detailed = await Promise.all(
+                        data.Search.slice(0, 8).map(async (item) => {
+                            const r = await fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&i=${item.imdbID}&plot=full`);
+                            return await r.json();
+                        })
+                    );
+                    state.searchResults = detailed;
+                } else {
+                    state.searchResults = [];
+                }
+            } catch (err) {
+                console.error(err);
+            }
+            state.isSearching = false;
+            render();
+        }
+
+        // Ajouter à la collection
+        async function addToCollection(item, rating) {
+            const newItem = {
+                ...item,
+                addedDate: new Date().toISOString(),
+                ourRating: rating,
+                seasons: item.Type === 'series' && item.totalSeasons ? 
+                    Array.from({ length: parseInt(item.totalSeasons) }, (_, i) => ({
+                        season: i + 1,
+                        episodes: []
+                    })) : null
+            };
+            state.collection = [newItem, ...state.collection];
+            await saveCollection();
+            state.showRatingModal = false;
+            state.selectedItem = null;
+            render();
+        }
+
+        // Mettre à jour note épisode
+        async function updateEpisodeRating(imdbID, seasonNum, episodeNum, rating) {
+            state.collection = state.collection.map(item => {
+                if (item.imdbID === imdbID) {
+                    const season = item.seasons[seasonNum - 1];
+                    const existingEp = season.episodes.find(e => e.episode === episodeNum);
+                    if (existingEp) {
+                        existingEp.rating = rating;
+                    } else {
+                        season.episodes.push({ episode: episodeNum, rating, date: new Date().toISOString() });
+                    }
+                    season.episodes.sort((a, b) => a.episode - b.episode);
+                }
+                return item;
+            });
+            await saveCollection();
+            render();
+        }
+
+        // Supprimer
+        async function deleteItem(imdbID) {
+            if (confirm('Supprimer cet élément ?')) {
+                state.collection = state.collection.filter(i => i.imdbID !== imdbID);
+                await saveCollection();
+                render();
+            }
+        }
+
+        // Statistiques
+        function getStats() {
+            return {
+                movies: state.collection.filter(i => i.Type === 'movie').length,
+                series: state.collection.filter(i => i.Type === 'series').length,
+                episodes: state.collection.reduce((sum, item) => {
+                    if (item.Type === 'series' && item.seasons) {
+                        return sum + item.seasons.reduce((s, season) => s + season.episodes.length, 0);
+                    }
+                    return sum;
+                }, 0)
+            };
+        }
+
+        // Composants UI
+        function StarRating(rating, size = 16, onRate = null) {
+            return Array.from({ length: 5 }, (_, i) => {
+                const filled = i < rating;
+                return `<button ${onRate ? `onclick="window.setRating(${i + 1})"` : ''} 
+                    class="inline-block ${onRate ? 'cursor-pointer' : ''} ${filled ? 'text-yellow-400' : 'text-gray-600'}"
+                    style="width: ${size}px; height: ${size}px">
+                    ${icons.star(filled)}
+                </button>`;
+            }).join('');
+        }
+
+        function RatingModal() {
+            if (!state.showRatingModal || !state.selectedItem) return '';
+            const item = state.selectedItem;
+            return `
+                <div class="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onclick="if(event.target === this) { state.showRatingModal = false; render(); }">
+                    <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full">
+                        <div class="flex justify-between items-start mb-4">
+                            <h3 class="text-xl font-bold">${item.Title}</h3>
+                            <button onclick="state.showRatingModal = false; render();" class="text-gray-400 hover:text-white">
+                                ${icons.x}
+                            </button>
+                        </div>
+                        <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'200\' height=\'300\'%3E%3Crect fill=\'%23374151\' width=\'200\' height=\'300\'/%3E%3C/svg%3E'}" 
+                             alt="${item.Title}" class="w-full h-48 object-cover rounded mb-4" />
+                        <p class="text-gray-400 text-sm mb-4">${item.Year} • ${item.Type === 'movie' ? 'Film' : 'Série'}</p>
+                        <div class="mb-6">
+                            <p class="text-white mb-2">Votre note :</p>
+                            <div class="flex gap-2" id="rating-stars">
+                                ${StarRating(window.tempRating || 0, 32, true)}
+                            </div>
+                        </div>
+                        <button onclick="if(window.tempRating) { addToCollection(state.selectedItem, window.tempRating); window.tempRating = 0; }" 
+                                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50"
+                                ${!window.tempRating ? 'disabled' : ''}>
+                            Ajouter à notre collection
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function SeriesDetail(item) {
+            return item.seasons.map(season => {
+                const isExpanded = state.expandedSeasons[`${item.imdbID}-${season.season}`];
+                return `
+                    <div class="bg-gray-700 rounded-lg overflow-hidden mb-3">
+                        <button onclick="toggleSeason('${item.imdbID}', ${season.season})"
+                                class="w-full p-4 flex justify-between items-center hover:bg-gray-600">
+                            <span class="text-white font-semibold">
+                                Saison ${season.season} (${season.episodes.length} épisodes)
+                            </span>
+                            ${isExpanded ? icons.chevronDown : icons.chevronRight}
+                        </button>
+                        ${isExpanded ? `
+                            <div class="p-4 bg-gray-750 space-y-3">
+                                <div class="flex gap-2 mb-4">
+                                    <input type="number" id="ep-input-${item.imdbID}-${season.season}" placeholder="Épisode" min="1"
+                                           class="w-24 bg-gray-600 text-white px-3 py-2 rounded" />
+                                    <div class="flex gap-1" id="ep-rating-${item.imdbID}-${season.season}">
+                                        ${Array.from({ length: 5 }, (_, i) => `
+                                            <button onclick="window.epRating['${item.imdbID}-${season.season}'] = ${i + 1}; render();"
+                                                    class="${(window.epRating[`${item.imdbID}-${season.season}`] || 0) > i ? 'text-yellow-400' : 'text-gray-500'}">
+                                                ${icons.star((window.epRating[`${item.imdbID}-${season.season}`] || 0) > i)}
+                                            </button>
+                                        `).join('')}
+                                    </div>
+                                    <button onclick="addEpisode('${item.imdbID}', ${season.season})"
+                                            class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 ml-auto">
+                                        ${icons.plus}
+                                    </button>
+                                </div>
+                                ${season.episodes.map(ep => `
+                                    <div class="flex justify-between items-center bg-gray-800 p-3 rounded">
+                                        <span class="text-white">Épisode ${ep.episode}</span>
+                                        <div class="flex gap-1">
+                                            ${StarRating(ep.rating, 16)}
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function HomePage() {
+            const stats = getStats();
+            return `
+                <div class="grid grid-cols-3 gap-4 mb-6">
+                    <div class="bg-gradient-to-br from-blue-600 to-blue-800 p-6 rounded-xl">
+                        ${icons.film}
+                        <div class="text-3xl font-bold mt-2">${stats.movies}</div>
+                        <div class="text-blue-200 text-sm">Films</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-purple-600 to-purple-800 p-6 rounded-xl">
+                        ${icons.tv}
+                        <div class="text-3xl font-bold mt-2">${stats.series}</div>
+                        <div class="text-purple-200 text-sm">Séries</div>
+                    </div>
+                    <div class="bg-gradient-to-br from-green-600 to-green-800 p-6 rounded-xl">
+                        ${icons.trending}
+                        <div class="text-3xl font-bold mt-2">${stats.episodes}</div>
+                        <div class="text-green-200 text-sm">Épisodes</div>
+                    </div>
+                </div>
+
+                <h2 class="text-2xl font-bold mb-4">Historique</h2>
+                ${state.collection.length === 0 ? `
+                    <div class="text-center py-12 text-gray-400">
+                        ${icons.film}
+                        <p class="text-xl mt-4">Votre collection est vide</p>
+                        <p class="mt-2 text-sm">Recherchez un film ou une série !</p>
+                    </div>
+                ` : `
+                    <div class="space-y-4">
+                        ${state.collection.map(item => `
+                            <div class="bg-gray-800 rounded-lg p-4">
+                                <div class="flex gap-4">
+                                    <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'100\' height=\'150\'%3E%3Crect fill=\'%23374151\' width=\'100\' height=\'150\'/%3E%3C/svg%3E'}" 
+                                         alt="${item.Title}" class="w-20 h-28 object-cover rounded" />
+                                    <div class="flex-1">
+                                        <div class="flex justify-between items-start">
+                                            <div>
+                                                <h3 class="text-lg font-bold mb-1">${item.Title}</h3>
+                                                <p class="text-gray-400 text-sm mb-2">${item.Year} • ${item.Type === 'movie' ? 'Film' : 'Série'}</p>
+                                            </div>
+                                            <button onclick="deleteItem('${item.imdbID}')" class="text-red-400 hover:text-red-300 p-2">
+                                                ${icons.trash}
+                                            </button>
+                                        </div>
+                                        <div class="flex gap-1 mb-2">
+                                            ${StarRating(item.ourRating, 16)}
+                                        </div>
+                                        <p class="text-gray-300 text-sm">${(item.Plot || '').substring(0, 150)}...</p>
+                                    </div>
+                                </div>
+                                ${item.Type === 'series' && item.seasons ? `<div class="mt-4">${SeriesDetail(item)}</div>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                `}
+            `;
+        }
+
+        function SearchPage() {
+            return `
+                <div class="flex gap-2 mb-6">
+                    <input type="text" value="${state.searchQuery}" 
+                           oninput="state.searchQuery = this.value"
+                           onkeypress="if(event.key === 'Enter') searchMedia()"
+                           placeholder="Rechercher un film ou une série..."
+                           class="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600" />
+                    <button onclick="searchMedia()" 
+                            class="bg-blue-600 px-6 py-3 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                        ${icons.search} Rechercher
+                    </button>
+                </div>
+
+                ${state.isSearching ? '<p class="text-center text-gray-400">Recherche en cours...</p>' : ''}
+
+                <div class=
