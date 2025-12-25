@@ -3,283 +3,242 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#0f172a">
-    <title>WatchParty 🎬</title>
+    <title>WatchParty Pro 🎬</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
-        .glass-effect { background: rgba(30, 41, 59, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .gradient-text { background: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        
-        /* Optimisation Mobile */
-        body { overscroll-behavior-y: contain; -webkit-tap-highlight-color: transparent; }
-        .card-hover { transition: transform 0.2s ease; }
-        @media (min-width: 768px) { .card-hover:hover { transform: translateY(-8px); } }
-        
-        /* Custom Scrollbar */
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0f172a; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        :root { --accent: #8b5cf6; }
+        body { background-color: #020617; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
+        .progress-bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.1); overflow: hidden; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #8b5cf6, #d946ef); transition: width 0.5s ease; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .log-panel { font-family: monospace; font-size: 10px; max-height: 120px; overflow-y: auto; background: #000; color: #22c55e; padding: 8px; }
     </style>
 </head>
-<body class="bg-[#0f172a] text-white min-h-screen font-sans selection:bg-purple-500/30">
+<body>
 
 <div id="app"></div>
 
 <script>
-// CONFIGURATION (HTTPS Corrigé)
-const firebaseConfig = {
-    databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app"
-};
-const OMDB_API = "https://www.omdbapi.com/?apikey=b9a5e69d";
+const DB_URL = "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app/collection.json";
+const API_BASE = "https://imdbapi.dev";
 
-let appState = {
-    view: 'films',
+let state = {
+    view: 'films', // films, series, search
+    filter: 'recent', // recent, rating
+    query: '',
+    results: [],
     collection: [],
-    searchQuery: '',
-    searchResults: [],
-    isSearching: false,
-    isLoading: true,
-    showRatingPopup: false,
-    ratingItem: null,
-    ratingType: 'movie',
-    modalRating: 0,
-    episodeData: null
+    loading: true,
+    searching: false,
+    showLogs: false,
+    logs: [],
+    ratingModal: null // {item, type, epData}
 };
 
-// PERSISTENCE & CHARGEMENT
-async function loadCollection() {
+function addLog(m) {
+    state.logs.unshift(`[${new Date().toLocaleTimeString()}] ${m}`);
+    render();
+}
+
+// --- LOGIQUE DONNÉES ---
+async function fetchData() {
     try {
-        const response = await fetch(`${firebaseConfig.databaseURL}/collection.json`);
-        const data = await response.json();
-        appState.collection = data || [];
-        localStorage.setItem('wp_cache', JSON.stringify(appState.collection));
-    } catch (e) {
-        const cache = localStorage.getItem('wp_cache');
-        if (cache) appState.collection = JSON.parse(cache);
-    }
-    appState.isLoading = false;
+        const r = await fetch(DB_URL);
+        state.collection = await r.json() || [];
+        addLog("Sync terminée (" + state.collection.length + ")");
+    } catch (e) { addLog("Erreur Sync: " + e.message); }
+    state.loading = false;
     render();
 }
 
-async function saveCollection() {
+async function save() {
     try {
-        await fetch(`${firebaseConfig.databaseURL}/collection.json`, {
-            method: 'PUT',
-            body: JSON.stringify(appState.collection)
-        });
-        localStorage.setItem('wp_cache', JSON.stringify(appState.collection));
-    } catch (e) { console.error("Erreur de sauvegarde:", e); }
+        await fetch(DB_URL, { method: 'PUT', body: JSON.stringify(state.collection) });
+    } catch (e) { addLog("Erreur Save: " + e.message); }
 }
 
-// RECHERCHE (Correction HTTPS)
-async function searchMovies() {
-    if (!appState.searchQuery.trim()) return;
-    appState.isSearching = true;
+// --- RECHERCHE (imdbapi.dev) ---
+async function search() {
+    if(!state.query.trim()) return;
+    state.searching = true;
     render();
+    addLog("Recherche IMDB...");
     try {
-        const response = await fetch(`${OMDB_API}&s=${encodeURIComponent(appState.searchQuery)}`);
-        const data = await response.json();
-        if (data.Response === 'True') {
-            const details = await Promise.all(
-                data.Search.slice(0, 12).map(item => 
-                    fetch(`${OMDB_API}&i=${item.imdbID}`).then(r => r.json())
-                )
-            );
-            appState.searchResults = details;
-        } else {
-            appState.searchResults = [];
-        }
-    } catch (e) { alert("Erreur de connexion à l'API"); }
-    appState.isSearching = false;
+        const r = await fetch(`${API_BASE}/search?q=${encodeURIComponent(state.query)}`);
+        const data = await r.json();
+        state.results = data.results || [];
+        addLog(state.results.length + " trouvés");
+    } catch (e) { addLog("Erreur API: " + e.message); }
+    state.searching = false;
     render();
 }
 
-// ACTIONS
-function openRatingPopup(item, type = 'movie', episodeData = null) {
-    appState.ratingItem = item;
-    appState.ratingType = type;
-    appState.episodeData = episodeData;
-    appState.modalRating = 0;
-    appState.showRatingPopup = true;
-    render();
-}
-
-function submitRating() {
-    const item = appState.ratingItem;
-    if (appState.ratingType === 'movie') {
-        const idx = appState.collection.findIndex(i => i.imdbID === item.imdbID);
-        if (idx === -1) {
-            appState.collection.unshift({
-                ...item,
-                ourRating: appState.modalRating,
-                seasons: item.Type === 'series' ? Array.from({length: parseInt(item.totalSeasons) || 0}, (_, i) => ({season: i+1, episodes: []})) : null
-            });
-        } else {
-            appState.collection[idx].ourRating = appState.modalRating;
-        }
+// --- ACTIONS ---
+function addToCollection(item, rating) {
+    const exists = state.collection.find(i => i.id === item.id);
+    if (!exists) {
+        const newItem = {
+            id: item.id,
+            title: item.title,
+            year: item.year,
+            image: item.image,
+            type: item.type === 'movie' ? 'movie' : 'series',
+            rating: rating,
+            addedAt: Date.now(),
+            episodes: [] // Format: {s:1, e:5, r:4}
+        };
+        state.collection.unshift(newItem);
     } else {
-        const series = appState.collection.find(i => i.imdbID === item.imdbID);
-        if (series?.seasons) {
-            const s = series.seasons[appState.episodeData.season - 1];
-            const epIdx = s.episodes.findIndex(e => e.episode === appState.episodeData.episode);
-            if (epIdx > -1) s.episodes[epIdx].rating = appState.modalRating;
-            else s.episodes.push({episode: appState.episodeData.episode, rating: appState.modalRating});
-        }
+        exists.rating = rating;
     }
-    saveCollection();
-    appState.showRatingPopup = false;
+    save();
+    state.ratingModal = null;
+    state.view = item.type === 'movie' ? 'films' : 'series';
     render();
+}
+
+function noteEpisode(itemId, s, e, r) {
+    const item = state.collection.find(i => i.id === itemId);
+    if (item) {
+        const idx = item.episodes.findIndex(ep => ep.s === s && ep.e === e);
+        if (idx > -1) item.episodes[idx].r = r;
+        else item.episodes.push({s, e, r});
+        save();
+    }
+    state.ratingModal = null;
+    render();
+}
+
+// --- COMPOSANTS UI ---
+function render() {
+    const app = document.getElementById('app');
+    if(state.loading) {
+        app.innerHTML = `<div class="h-screen flex items-center justify-center animate-pulse text-purple-500 text-4xl">🎬</div>`;
+        return;
+    }
+
+    // Filtrage et Tri
+    let list = state.collection.filter(i => state.view === 'films' ? i.type === 'movie' : i.type === 'series');
+    if(state.filter === 'rating') list.sort((a,b) => b.rating - a.rating);
+    else list.sort((a,b) => b.addedAt - a.addedAt);
+
+    app.innerHTML = `
+        <header class="glass sticky top-0 z-50 p-4 flex justify-between items-center">
+            <h1 class="text-xl font-black bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">WATCHPARTY</h1>
+            <button onclick="state.showLogs=!state.showLogs;render()" class="text-[10px] opacity-50">LOGS</button>
+        </header>
+
+        ${state.showLogs ? `<div class="log-panel">${state.logs.map(l=>`<div>${l}</div>`).join('')}</div>` : ''}
+
+        <nav class="flex p-4 gap-2 overflow-x-auto no-scrollbar">
+            ${['films', 'series', 'search'].map(v => `
+                <button onclick="state.view='${v}';render()" class="px-6 py-2 rounded-full text-sm font-bold transition-all ${state.view === v ? 'bg-purple-600 shadow-lg shadow-purple-900/40' : 'bg-slate-800 text-slate-400'}">
+                    ${v.toUpperCase()}
+                </button>
+            `).join('')}
+        </nav>
+
+        <main class="p-4 pb-24">
+            ${state.view === 'search' ? renderSearch() : `
+                <div class="flex gap-4 mb-6 text-xs font-bold text-slate-500">
+                    <button onclick="state.filter='recent';render()" class="${state.filter==='recent'?'text-white':''}">RÉCENTS</button>
+                    <button onclick="state.filter='rating';render()" class="${state.filter==='rating'?'text-white':''}">MIEUX NOTÉS</button>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                    ${list.map(renderCard).join('')}
+                </div>
+            `}
+        </main>
+
+        ${state.ratingModal ? renderRatingModal() : ''}
+    `;
+}
+
+function renderCard(item) {
+    const progress = item.type === 'series' ? Math.min((item.episodes.length / 12) * 100, 100) : 0; // Estimation 12 ep/saison
+    return `
+        <div class="glass rounded-2xl overflow-hidden flex flex-col group">
+            <div class="relative aspect-[2/3]">
+                <img src="${item.image}" class="w-full h-full object-cover">
+                <div class="absolute inset-0 bg-gradient-to-t from-black/90 via-transparent to-transparent p-3 flex flex-col justify-end">
+                    <div class="flex text-yellow-400 text-xs">${'★'.repeat(item.rating)}</div>
+                </div>
+                <button onclick="deleteItem('${item.id}')" class="absolute top-2 right-2 p-2 bg-black/40 rounded-full text-[10px]">🗑️</button>
+            </div>
+            <div class="p-3">
+                <h3 class="text-xs font-bold truncate mb-2">${item.title}</h3>
+                ${item.type === 'series' ? `
+                    <div class="progress-bar mb-1"><div class="progress-fill" style="width:${progress}%"></div></div>
+                    <div class="flex justify-between text-[8px] text-slate-500 font-bold uppercase">
+                        <span>Progression</span>
+                        <span>${item.episodes.length} EP</span>
+                    </div>
+                    <button onclick="openNoteEp('${item.id}')" class="w-full mt-3 py-2 bg-white/5 rounded-lg text-[10px] font-bold">+ ÉPISODE</button>
+                ` : ''}
+            </div>
+        </div>
+    `;
+}
+
+function renderSearch() {
+    return `
+        <div class="flex gap-2 mb-8">
+            <input type="text" oninput="state.query=this.value" onkeypress="if(event.key==='Enter')search()" 
+                class="flex-1 bg-slate-800 rounded-xl px-4 py-3 outline-none focus:ring-2 ring-purple-500" placeholder="Rechercher un titre...">
+            <button onclick="search()" class="bg-purple-600 px-6 rounded-xl">🔍</button>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+            ${state.results.map(r => `
+                <div onclick="state.ratingModal={item:${JSON.stringify(r).replace(/"/g, '&quot;')}, type:'movie'};render()" class="glass p-2 rounded-xl text-center">
+                    <img src="${r.image}" class="rounded-lg aspect-[2/3] object-cover mb-2">
+                    <div class="text-[10px] font-bold truncate">${r.title}</div>
+                    <div class="text-[9px] text-purple-400 uppercase mt-1">Ajouter</div>
+                </div>
+            `).join('')}
+        </div>
+        ${state.searching ? '<div class="text-center p-10 animate-pulse">Chargement...</div>' : ''}
+    `;
+}
+
+function renderRatingModal() {
+    const {item, type} = state.ratingModal;
+    return `
+        <div class="fixed inset-0 z-[100] glass flex items-center justify-center p-6">
+            <div class="bg-slate-900 border border-white/10 w-full max-w-xs rounded-3xl p-6 shadow-2xl">
+                <h2 class="text-center font-bold mb-2">${item.title || 'Noter'}</h2>
+                <p class="text-center text-[10px] text-slate-500 mb-6 uppercase tracking-widest">Combien d'étoiles ?</p>
+                <div class="flex justify-center gap-2 mb-8 text-2xl">
+                    ${[1,2,3,4,5].map(n => `<button onclick="confirmNote(${n})" class="hover:scale-125 transition-transform">★</button>`).join('')}
+                </div>
+                <button onclick="state.ratingModal=null;render()" class="w-full py-3 text-sm text-slate-500 font-bold">ANNULER</button>
+            </div>
+        </div>
+    `;
+}
+
+function openNoteEp(id) {
+    const s = prompt("Saison ?", "1");
+    const e = prompt("Épisode ?", "1");
+    if(s && e) state.ratingModal = {item: {id, title: `Saison ${s} Ép. ${e}`}, type: 'episode', epData: {s: parseInt(s), e: parseInt(e)}};
+    render();
+}
+
+function confirmNote(n) {
+    const m = state.ratingModal;
+    if(m.type === 'movie') addToCollection(m.item, n);
+    else noteEpisode(m.item.id, m.epData.s, m.epData.e, n);
 }
 
 function deleteItem(id) {
-    if(confirm("Supprimer de la collection ?")) {
-        appState.collection = appState.collection.filter(i => i.imdbID !== id);
-        saveCollection();
+    if(confirm("Supprimer ?")) {
+        state.collection = state.collection.filter(i => i.id !== id);
+        save();
         render();
     }
 }
 
-// RENDU
-function createStars(rating, size=14, interactive=false) {
-    return Array.from({length: 5}, (_, i) => {
-        const active = i < rating;
-        return `<span onclick="${interactive ? `appState.modalRating=${i+1};render()` : ''}" 
-            class="${interactive ? 'cursor-pointer px-1' : ''} ${active ? 'text-yellow-400' : 'text-slate-600'}" 
-            style="font-size: ${size}px">★</span>`;
-    }).join('');
-}
-
-function render() {
-    const root = document.getElementById('app');
-    if (appState.isLoading) {
-        root.innerHTML = `<div class="h-screen flex items-center justify-center flex-col gap-4">
-            <div class="text-6xl animate-bounce">🎬</div>
-            <div class="h-1 w-48 bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full bg-purple-500 animate-[shimmer_2s_infinite]"></div>
-            </div>
-        </div>`;
-        return;
-    }
-
-    const filtered = appState.collection.filter(i => appState.view === 'films' ? i.Type === 'movie' : i.Type === 'series');
-
-    root.innerHTML = `
-        <header class="glass-effect sticky top-0 z-40 px-4 py-3 md:py-4">
-            <div class="max-w-6xl mx-auto flex justify-between items-center">
-                <h1 class="text-xl md:text-2xl font-bold gradient-text">WatchParty 🎬</h1>
-                <button onclick="loadCollection()" class="p-2 hover:bg-white/10 rounded-full transition-colors text-lg">🔄</button>
-            </div>
-        </header>
-
-        <nav class="max-w-6xl mx-auto px-4 mt-6 overflow-x-auto no-scrollbar">
-            <div class="flex gap-2 min-w-max">
-                ${['films', 'series', 'search'].map(v => `
-                    <button onclick="appState.view='${v}';render()" 
-                        class="px-5 py-2.5 rounded-full font-medium transition-all text-sm md:text-base
-                        ${appState.view === v ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
-                        ${v === 'films' ? '🎬 Films' : v === 'series' ? '📺 Séries' : '🔍 Recherche'}
-                    </button>
-                `).join('')}
-            </div>
-        </nav>
-
-        <main class="max-w-6xl mx-auto px-4 py-8">
-            ${appState.view === 'search' ? renderSearchView() : renderCollectionView(filtered)}
-        </main>
-
-        ${appState.showRatingPopup ? renderPopup() : ''}
-    `;
-}
-
-function renderSearchView() {
-    return `
-        <div class="fade-in max-w-2xl mx-auto mb-10">
-            <div class="flex gap-2">
-                <input type="text" id="searchInput" value="${appState.searchQuery}" 
-                    oninput="appState.searchQuery=this.value" 
-                    onkeypress="if(event.key==='Enter')searchMovies()"
-                    placeholder="Titre du film..." 
-                    class="w-full bg-slate-800/50 border border-white/10 rounded-2xl px-5 py-3.5 focus:outline-none focus:border-purple-500 transition-all">
-                <button onclick="searchMovies()" class="bg-purple-600 px-6 rounded-2xl font-bold">OK</button>
-            </div>
-        </div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            ${appState.searchResults.map(item => `
-                <div class="glass-effect rounded-2xl overflow-hidden fade-in card-hover" onclick='openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")}, "movie")'>
-                    <img src="${item.Poster !== 'N/A' ? item.Poster : 'https://via.placeholder.com/300x450?text=No+Poster'}" class="aspect-[2/3] object-cover w-full">
-                    <div class="p-3">
-                        <h4 class="text-xs font-bold truncate">${item.Title}</h4>
-                        <p class="text-[10px] text-slate-400">${item.Year}</p>
-                    </div>
-                </div>
-            `).join('')}
-        </div>
-        ${appState.isSearching ? '<p class="text-center mt-10 animate-pulse text-slate-400">Recherche en cours...</p>' : ''}
-    `;
-}
-
-function renderCollectionView(items) {
-    if (items.length === 0) return `<div class="text-center py-20 opacity-50"><p class="text-xl">Ta collection est vide 🍿</p></div>`;
-    
-    return `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
-        ${items.map(item => `
-            <div class="glass-effect rounded-2xl overflow-hidden flex flex-col fade-in card-hover group">
-                <div class="relative">
-                    <img src="${item.Poster}" class="aspect-[2/3] object-cover w-full">
-                    <button onclick="deleteItem('${item.imdbID}')" class="absolute top-2 right-2 bg-black/50 p-2 rounded-full hover:bg-red-500 transition-colors">🗑️</button>
-                    <div class="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-slate-900 to-transparent">
-                        <div class="flex gap-0.5">${createStars(item.ourRating)}</div>
-                    </div>
-                </div>
-                <div class="p-4 flex-1">
-                    <h3 class="font-bold text-sm leading-tight mb-1 line-clamp-2">${item.Title}</h3>
-                    <p class="text-xs text-slate-400 mb-3">${item.Year}</p>
-                    ${item.Type === 'series' ? renderSeasons(item) : `
-                        <button onclick='openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")})' class="w-full py-2 bg-white/5 rounded-lg text-xs hover:bg-white/10 transition-all">Noter</button>
-                    `}
-                </div>
-            </div>
-        `).join('')}
-    </div>`;
-}
-
-function renderSeasons(item) {
-    return `<div class="space-y-1 mt-auto">
-        ${item.seasons?.slice(0,3).map(s => `
-            <details class="text-[11px] bg-white/5 rounded-md">
-                <summary class="p-2 cursor-pointer opacity-70">Saison ${s.season} (${s.episodes.length} ép.)</summary>
-                <div class="p-2 border-t border-white/5 space-y-2">
-                    <div class="flex gap-1">
-                        <input type="number" id="ep-input-${item.imdbID}-${s.season}" placeholder="N°" class="w-12 bg-slate-900 rounded px-1">
-                        <button onclick="const n=document.getElementById('ep-input-${item.imdbID}-${s.season}').value; if(n) openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")}, 'episode', {season:${s.season}, episode:parseInt(n)})" class="flex-1 bg-purple-600 rounded py-1">Note</button>
-                    </div>
-                    ${s.episodes.map(e => `<div class="flex justify-between items-center text-[10px]"><span>Ép. ${e.episode}</span><span>${createStars(e.rating, 8)}</span></div>`).join('')}
-                </div>
-            </details>
-        `).join('')}
-    </div>`;
-}
-
-function renderPopup() {
-    return `
-        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md fade-in">
-            <div class="glass-effect w-full max-w-xs rounded-3xl p-6 text-center animate-scaleIn">
-                <h2 class="text-lg font-bold mb-1">${appState.ratingItem.Title}</h2>
-                <p class="text-xs text-purple-400 mb-6">${appState.episodeData ? `Saison ${appState.episodeData.season} • Épisode ${appState.episodeData.episode}` : 'Note générale'}</p>
-                <div class="flex justify-center gap-1 mb-8">${createStars(appState.modalRating, 32, true)}</div>
-                <div class="flex gap-3">
-                    <button onclick="appState.showRatingPopup=false;render()" class="flex-1 py-3 rounded-xl bg-slate-800 font-bold">Annuler</button>
-                    <button onclick="submitRating()" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 font-bold shadow-lg">Valider</button>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-// INIT
-loadCollection();
+fetchData();
 </script>
 </body>
 </html>
