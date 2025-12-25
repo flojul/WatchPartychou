@@ -3,28 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="theme-color" content="#1f2937">
+    <meta name="theme-color" content="#0f172a">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <title>Notre Cinéthèque</title>
+    <title>WatchParty 🎬</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeInScale {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes slideInUp {
+            from { opacity: 0; transform: translateY(100%); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        .fade-in-scale { animation: fadeInScale 0.3s ease-out forwards; }
+        .slide-up { animation: slideInUp 0.4s ease-out forwards; }
+        .card-hover {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .card-hover:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+        .glass-effect {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .gradient-text {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .shimmer {
+            background: linear-gradient(90deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite;
+        }
         * { -webkit-tap-highlight-color: transparent; }
-        body { overscroll-behavior-y: contain; margin: 0; padding: 0; }
+        body { overscroll-behavior: contain; }
+        .star-btn {
+            transition: transform 0.2s, color 0.2s;
+        }
+        .star-btn:active {
+            transform: scale(1.2);
+        }
     </style>
 </head>
-<body class="bg-gray-900 text-white">
+<body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white min-h-screen">
     <div id="app"></div>
 
     <script>
-        // Configuration Firebase
         const firebaseConfig = {
             apiKey: "AIzaSyBFN56hOHMO0yOOiKxFCr2hU6trRnqf3jQ",
             databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app"
         };
 
-        // État global
         let appState = {
-            view: 'home',
+            view: 'films',
             collection: [],
             searchQuery: '',
             searchResults: [],
@@ -33,29 +78,28 @@
             selectedItem: null,
             showModal: false,
             modalRating: 0,
-            expandedSeasons: {},
-            episodeInputs: {}
+            showRatingPopup: false,
+            ratingItem: null,
+            ratingType: 'movie',
+            episodeData: null
         };
 
-        // Charger la collection depuis Firebase
         async function loadCollection() {
             appState.isLoading = true;
-            renderApp();
+            render();
             try {
                 const response = await fetch(firebaseConfig.databaseURL + '/collection.json');
                 const data = await response.json();
                 appState.collection = data || [];
                 localStorage.setItem('cache', JSON.stringify(appState.collection));
             } catch (error) {
-                console.error('Erreur:', error);
                 const cache = localStorage.getItem('cache');
                 if (cache) appState.collection = JSON.parse(cache);
             }
             appState.isLoading = false;
-            renderApp();
+            render();
         }
 
-        // Sauvegarder la collection
         async function saveCollection() {
             try {
                 await fetch(firebaseConfig.databaseURL + '/collection.json', {
@@ -64,366 +108,296 @@
                 });
                 localStorage.setItem('cache', JSON.stringify(appState.collection));
             } catch (error) {
-                alert('Erreur de synchronisation');
+                console.error('Erreur:', error);
             }
         }
 
-        // Rechercher sur OMDb
         async function searchMovies() {
             if (!appState.searchQuery) return;
             appState.isSearching = true;
             appState.searchResults = [];
-            renderApp();
+            render();
             
             try {
                 const response = await fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&s=${encodeURIComponent(appState.searchQuery)}`);
                 const data = await response.json();
                 
                 if (data.Response === 'True') {
-                    const promises = data.Search.slice(0, 8).map(item =>
+                    const promises = data.Search.slice(0, 12).map(item =>
                         fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&i=${item.imdbID}`)
                             .then(r => r.json())
                     );
                     appState.searchResults = await Promise.all(promises);
                 }
             } catch (error) {
-                console.error('Erreur recherche:', error);
+                console.error('Erreur:', error);
             }
             
             appState.isSearching = false;
-            renderApp();
+            render();
         }
 
-        // Ajouter à la collection
-        function addToCollection() {
-            if (!appState.modalRating || !appState.selectedItem) return;
-            
-            const item = appState.selectedItem;
-            const newItem = {
-                imdbID: item.imdbID,
-                Title: item.Title,
-                Year: item.Year,
-                Type: item.Type,
-                Poster: item.Poster,
-                Plot: item.Plot,
-                totalSeasons: item.totalSeasons,
-                ourRating: appState.modalRating,
-                addedDate: new Date().toISOString(),
-                seasons: null
-            };
+        function openRatingPopup(item, type = 'movie', episodeData = null) {
+            appState.ratingItem = item;
+            appState.ratingType = type;
+            appState.episodeData = episodeData;
+            appState.modalRating = 0;
+            appState.showRatingPopup = true;
+            render();
+        }
 
-            if (item.Type === 'series' && item.totalSeasons) {
-                newItem.seasons = [];
-                for (let i = 1; i <= parseInt(item.totalSeasons); i++) {
-                    newItem.seasons.push({ season: i, episodes: [] });
+        function submitRating() {
+            if (!appState.modalRating) return;
+
+            const item = appState.ratingItem;
+
+            if (appState.ratingType === 'movie') {
+                // Ajouter un film
+                const exists = appState.collection.find(i => i.imdbID === item.imdbID);
+                if (!exists) {
+                    const newItem = {
+                        imdbID: item.imdbID,
+                        Title: item.Title,
+                        Year: item.Year,
+                        Type: item.Type,
+                        Poster: item.Poster,
+                        Plot: item.Plot,
+                        totalSeasons: item.totalSeasons,
+                        ourRating: appState.modalRating,
+                        addedDate: new Date().toISOString(),
+                        seasons: item.Type === 'series' && item.totalSeasons ? 
+                            Array.from({ length: parseInt(item.totalSeasons) }, (_, i) => ({
+                                season: i + 1,
+                                episodes: []
+                            })) : null
+                    };
+                    appState.collection.unshift(newItem);
+                } else {
+                    exists.ourRating = appState.modalRating;
+                }
+            } else if (appState.ratingType === 'episode') {
+                // Ajouter note épisode
+                const seriesItem = appState.collection.find(i => i.imdbID === item.imdbID);
+                if (seriesItem && seriesItem.seasons) {
+                    const season = seriesItem.seasons[appState.episodeData.season - 1];
+                    const existingEp = season.episodes.find(e => e.episode === appState.episodeData.episode);
+                    
+                    if (existingEp) {
+                        existingEp.rating = appState.modalRating;
+                    } else {
+                        season.episodes.push({
+                            episode: appState.episodeData.episode,
+                            rating: appState.modalRating,
+                            date: new Date().toISOString()
+                        });
+                        season.episodes.sort((a, b) => a.episode - b.episode);
+                    }
                 }
             }
 
-            appState.collection.unshift(newItem);
             saveCollection();
-            appState.showModal = false;
-            appState.selectedItem = null;
+            appState.showRatingPopup = false;
             appState.modalRating = 0;
-            renderApp();
+            render();
         }
 
-        // Supprimer un item
         function deleteItem(imdbID) {
             if (confirm('Supprimer cet élément ?')) {
                 appState.collection = appState.collection.filter(i => i.imdbID !== imdbID);
                 saveCollection();
-                renderApp();
+                render();
             }
         }
 
-        // Toggle saison
-        function toggleSeason(imdbID, seasonNum) {
-            const key = imdbID + '-' + seasonNum;
-            appState.expandedSeasons[key] = !appState.expandedSeasons[key];
-            renderApp();
-        }
-
-        // Ajouter épisode
-        function addEpisode(imdbID, seasonNum) {
-            const key = imdbID + '-' + seasonNum;
-            const input = appState.episodeInputs[key];
-            if (!input || !input.episode || !input.rating) return;
-
-            const item = appState.collection.find(i => i.imdbID === imdbID);
-            if (!item || !item.seasons) return;
-
-            const season = item.seasons[seasonNum - 1];
-            const existingEp = season.episodes.find(e => e.episode === input.episode);
-            
-            if (existingEp) {
-                existingEp.rating = input.rating;
-            } else {
-                season.episodes.push({
-                    episode: input.episode,
-                    rating: input.rating,
-                    date: new Date().toISOString()
-                });
-                season.episodes.sort((a, b) => a.episode - b.episode);
-            }
-
-            appState.episodeInputs[key] = { episode: '', rating: 0 };
-            saveCollection();
-            renderApp();
-        }
-
-        // Calculer stats
-        function getStats() {
-            const movies = appState.collection.filter(i => i.Type === 'movie').length;
-            const series = appState.collection.filter(i => i.Type === 'series').length;
-            let episodes = 0;
-            appState.collection.forEach(item => {
-                if (item.seasons) {
-                    item.seasons.forEach(s => episodes += s.episodes.length);
-                }
-            });
-            return { movies, series, episodes };
-        }
-
-        // Créer les étoiles
-        function createStars(rating, size, clickable, onClickPrefix) {
+        function createStars(rating, size = 24, clickable = false) {
             let html = '';
             for (let i = 1; i <= 5; i++) {
                 const filled = i <= rating;
-                const color = filled ? 'text-yellow-400' : 'text-gray-600';
-                const click = clickable ? `onclick="${onClickPrefix}(${i})"` : '';
-                const cursor = clickable ? 'cursor-pointer' : '';
-                html += `<button ${click} class="inline-block ${color} ${cursor}" style="width:${size}px;height:${size}px;">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
-                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                    </svg>
-                </button>`;
+                const color = filled ? 'text-yellow-400' : 'text-slate-600';
+                const click = clickable ? `onclick="appState.modalRating=${i};render()"` : '';
+                html += `
+                    <button ${click} class="star-btn ${color} ${clickable ? 'cursor-pointer' : ''}" style="width:${size}px;height:${size}px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                    </button>
+                `;
             }
             return html;
         }
 
-        // Rendu principal
-        function renderApp() {
+        function render() {
             const app = document.getElementById('app');
             
             if (appState.isLoading) {
                 app.innerHTML = `
                     <div class="min-h-screen flex items-center justify-center">
-                        <div class="text-center">
-                            <div class="text-6xl mb-4">⏳</div>
-                            <p class="text-xl">Chargement...</p>
+                        <div class="text-center fade-in">
+                            <div class="text-8xl mb-6 animate-pulse">🎬</div>
+                            <div class="shimmer h-2 w-64 rounded-full mx-auto"></div>
+                            <p class="text-xl mt-6 text-slate-300">Chargement de votre collection...</p>
                         </div>
                     </div>
                 `;
                 return;
             }
 
-            const stats = getStats();
+            const movies = appState.collection.filter(i => i.Type === 'movie');
+            const series = appState.collection.filter(i => i.Type === 'series');
 
             app.innerHTML = `
-                <!-- Navigation -->
-                <nav class="bg-gray-800 p-4 sticky top-0 z-40 shadow-lg">
-                    <div class="max-w-4xl mx-auto flex justify-between items-center">
-                        <h1 class="text-xl md:text-2xl font-bold text-blue-400">Notre Cinéthèque</h1>
-                        <div class="flex gap-2">
-                            <button onclick="appState.view='home';renderApp()" 
-                                    class="px-3 md:px-4 py-2 rounded text-sm md:text-base ${appState.view === 'home' ? 'bg-blue-600' : 'bg-gray-700'}">
-                                Collection
+                <!-- Header -->
+                <header class="glass-effect sticky top-0 z-50 border-b border-white/10">
+                    <div class="max-w-7xl mx-auto px-4 py-4">
+                        <div class="flex items-center justify-between">
+                            <h1 class="text-2xl md:text-3xl font-bold gradient-text flex items-center gap-3">
+                                🎬 WatchParty
+                            </h1>
+                            <button onclick="loadCollection()" class="glass-effect px-4 py-2 rounded-xl hover:bg-white/10 transition-all">
+                                <span class="text-xl">🔄</span>
                             </button>
-                            <button onclick="appState.view='search';renderApp()" 
-                                    class="px-3 md:px-4 py-2 rounded text-sm md:text-base ${appState.view === 'search' ? 'bg-blue-600' : 'bg-gray-700'}">
-                                Rechercher
-                            </button>
-                            <button onclick="loadCollection()" class="p-2 hover:bg-gray-700 rounded">🔄</button>
                         </div>
                     </div>
-                </nav>
+                </header>
 
-                <!-- Contenu -->
-                <div class="max-w-4xl mx-auto p-4">
-                    ${appState.view === 'home' ? renderHome(stats) : renderSearch()}
-                </div>
-
-                <!-- Modal -->
-                ${appState.showModal ? renderModal() : ''}
-            `;
-        }
-
-        function renderHome(stats) {
-            return `
-                <div class="grid grid-cols-3 gap-4 mb-6">
-                    <div class="bg-gradient-to-br from-blue-600 to-blue-800 p-4 md:p-6 rounded-xl">
-                        <div class="text-2xl md:text-4xl mb-2">🎬</div>
-                        <div class="text-2xl md:text-3xl font-bold">${stats.movies}</div>
-                        <div class="text-blue-200 text-xs md:text-sm">Films</div>
-                    </div>
-                    <div class="bg-gradient-to-br from-purple-600 to-purple-800 p-4 md:p-6 rounded-xl">
-                        <div class="text-2xl md:text-4xl mb-2">📺</div>
-                        <div class="text-2xl md:text-3xl font-bold">${stats.series}</div>
-                        <div class="text-purple-200 text-xs md:text-sm">Séries</div>
-                    </div>
-                    <div class="bg-gradient-to-br from-green-600 to-green-800 p-4 md:p-6 rounded-xl">
-                        <div class="text-2xl md:text-4xl mb-2">📊</div>
-                        <div class="text-2xl md:text-3xl font-bold">${stats.episodes}</div>
-                        <div class="text-green-200 text-xs md:text-sm">Épisodes</div>
+                <!-- Navigation Tabs -->
+                <div class="max-w-7xl mx-auto px-4 mt-6">
+                    <div class="glass-effect rounded-2xl p-2 inline-flex gap-2">
+                        <button onclick="appState.view='films';render()" 
+                                class="px-6 py-3 rounded-xl font-semibold transition-all ${appState.view === 'films' ? 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg' : 'hover:bg-white/5'}">
+                            🎬 Films (${movies.length})
+                        </button>
+                        <button onclick="appState.view='series';render()" 
+                                class="px-6 py-3 rounded-xl font-semibold transition-all ${appState.view === 'series' ? 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg' : 'hover:bg-white/5'}">
+                            📺 Séries (${series.length})
+                        </button>
+                        <button onclick="appState.view='search';render()" 
+                                class="px-6 py-3 rounded-xl font-semibold transition-all ${appState.view === 'search' ? 'bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg' : 'hover:bg-white/5'}">
+                            🔍 Rechercher
+                        </button>
                     </div>
                 </div>
 
-                <h2 class="text-xl md:text-2xl font-bold mb-4">Historique</h2>
-                
-                ${appState.collection.length === 0 ? `
-                    <div class="text-center py-12 text-gray-400">
-                        <div class="text-6xl mb-4">🎬</div>
-                        <p class="text-lg md:text-xl">Collection vide</p>
-                        <p class="text-sm mt-2">Recherchez un film ou série !</p>
-                    </div>
-                ` : appState.collection.map(item => `
-                    <div class="bg-gray-800 rounded-lg p-4 mb-4">
-                        <div class="flex gap-4">
-                            <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22100%22 height=%22150%22%3E%3Crect fill=%22%23374151%22 width=%22100%22 height=%22150%22/%3E%3C/svg%3E'}" 
-                                 alt="${item.Title}" class="w-16 md:w-20 h-24 md:h-28 object-cover rounded" />
-                            <div class="flex-1 min-w-0">
-                                <div class="flex justify-between items-start">
-                                    <div class="flex-1 min-w-0">
-                                        <h3 class="text-base md:text-lg font-bold truncate">${item.Title}</h3>
-                                        <p class="text-gray-400 text-xs md:text-sm">${item.Year} • ${item.Type === 'movie' ? 'Film' : 'Série'}</p>
-                                    </div>
-                                    <button onclick="deleteItem('${item.imdbID}')" class="text-red-400 p-2 flex-shrink-0">🗑️</button>
-                                </div>
-                                <div class="my-2">${createStars(item.ourRating, 16, false, '')}</div>
-                                <p class="text-gray-300 text-xs md:text-sm line-clamp-2">${(item.Plot || '').substring(0, 150)}...</p>
-                            </div>
-                        </div>
-                        ${item.seasons ? renderSeasons(item) : ''}
-                    </div>
-                `).join('')}
-            `;
-        }
+                <!-- Content -->
+                <main class="max-w-7xl mx-auto px-4 py-8">
+                    ${appState.view === 'search' ? renderSearch() : renderCollection()}
+                </main>
 
-        function renderSeasons(item) {
-            return `
-                <div class="mt-4 space-y-2">
-                    ${item.seasons.map(season => {
-                        const key = item.imdbID + '-' + season.season;
-                        const isExpanded = appState.expandedSeasons[key];
-                        const input = appState.episodeInputs[key] || { episode: '', rating: 0 };
-                        
-                        return `
-                            <div class="bg-gray-700 rounded-lg overflow-hidden">
-                                <button onclick="toggleSeason('${item.imdbID}', ${season.season})"
-                                        class="w-full p-3 flex justify-between items-center hover:bg-gray-600">
-                                    <span class="text-sm md:text-base font-semibold">Saison ${season.season} (${season.episodes.length} ép.)</span>
-                                    <span>${isExpanded ? '▼' : '▶'}</span>
-                                </button>
-                                ${isExpanded ? `
-                                    <div class="p-3 space-y-2">
-                                        <div class="flex gap-2 items-center flex-wrap">
-                                            <input type="number" 
-                                                   value="${input.episode}" 
-                                                   oninput="if(!appState.episodeInputs['${key}'])appState.episodeInputs['${key}']={episode:'',rating:0};appState.episodeInputs['${key}'].episode=parseInt(this.value);renderApp()"
-                                                   placeholder="Ép." min="1"
-                                                   class="w-16 bg-gray-600 text-white px-2 py-1 rounded text-sm" />
-                                            <div class="flex gap-1">
-                                                ${[1,2,3,4,5].map(i => `
-                                                    <button onclick="if(!appState.episodeInputs['${key}'])appState.episodeInputs['${key}']={episode:'',rating:0};appState.episodeInputs['${key}'].rating=${i};renderApp()"
-                                                            class="${input.rating >= i ? 'text-yellow-400' : 'text-gray-500'}">
-                                                        <svg width="20" height="20" viewBox="0 0 24 24" fill="${input.rating >= i ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">
-                                                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-                                                        </svg>
-                                                    </button>
-                                                `).join('')}
-                                            </div>
-                                            <button onclick="addEpisode('${item.imdbID}', ${season.season})"
-                                                    class="bg-blue-600 text-white px-3 py-1 rounded text-sm ml-auto">
-                                                Ajouter
-                                            </button>
-                                        </div>
-                                        ${season.episodes.map(ep => `
-                                            <div class="flex justify-between items-center bg-gray-800 p-2 rounded">
-                                                <span class="text-sm">Épisode ${ep.episode}</span>
-                                                <div class="flex gap-1">
-                                                    ${createStars(ep.rating, 14, false, '')}
-                                                </div>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                ` : ''}
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
+                <!-- Rating Popup -->
+                ${appState.showRatingPopup ? renderRatingPopup() : ''}
             `;
         }
 
         function renderSearch() {
             return `
-                <div class="flex gap-2 mb-6">
-                    <input type="text" 
-                           value="${appState.searchQuery}" 
-                           oninput="appState.searchQuery=this.value"
-                           onkeypress="if(event.key==='Enter')searchMovies()"
-                           placeholder="Rechercher..."
-                           class="flex-1 bg-gray-800 text-white px-4 py-3 rounded-lg" />
-                    <button onclick="searchMovies()" 
-                            class="bg-blue-600 px-4 md:px-6 py-3 rounded-lg hover:bg-blue-700">
-                        🔍
-                    </button>
-                </div>
+                <div class="fade-in">
+                    <div class="glass-effect rounded-2xl p-6 mb-8">
+                        <div class="flex gap-3">
+                            <input type="text" 
+                                   value="${appState.searchQuery}" 
+                                   oninput="appState.searchQuery=this.value"
+                                   onkeypress="if(event.key==='Enter')searchMovies()"
+                                   placeholder="Rechercher un film ou une série..."
+                                   class="flex-1 bg-slate-800/50 text-white px-6 py-4 rounded-xl border border-white/10 focus:border-purple-500 focus:outline-none transition-all text-lg" />
+                            <button onclick="searchMovies()" 
+                                    class="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-4 rounded-xl font-semibold hover:shadow-xl transition-all">
+                                🔍 Rechercher
+                            </button>
+                        </div>
+                    </div>
 
-                ${appState.isSearching ? '<p class="text-center text-gray-400">Recherche...</p>' : ''}
+                    ${appState.isSearching ? `
+                        <div class="text-center py-20">
+                            <div class="shimmer h-4 w-48 rounded mx-auto mb-4"></div>
+                            <div class="shimmer h-4 w-64 rounded mx-auto"></div>
+                        </div>
+                    ` : ''}
 
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    ${appState.searchResults.map(item => `
-                        <div class="bg-gray-800 rounded-lg overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-600"
-                             onclick="appState.selectedItem=${JSON.stringify(item).replace(/"/g, '&quot;')};appState.showModal=true;appState.modalRating=0;renderApp()">
-                            <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22%3E%3Crect fill=%22%23374151%22 width=%22200%22 height=%22300%22/%3E%3C/svg%3E'}" 
-                                 alt="${item.Title}" class="w-full h-48 md:h-64 object-cover" />
-                            <div class="p-3">
-                                <h3 class="font-semibold text-sm truncate">${item.Title}</h3>
-                                <p class="text-gray-400 text-xs">${item.Year}</p>
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-6">
+                        ${appState.searchResults.map((item, i) => `
+                            <div class="fade-in card-hover" style="animation-delay: ${i * 0.05}s">
+                                <div class="glass-effect rounded-2xl overflow-hidden group cursor-pointer"
+                                     onclick="openRatingPopup(${JSON.stringify(item).replace(/"/g, '&quot;')}, 'movie')">
+                                    <div class="relative aspect-[2/3] overflow-hidden">
+                                        <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22%3E%3Crect fill=%22%23334155%22 width=%22200%22 height=%22300%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 text-anchor=%22middle%22 dy=%22.3em%22 fill=%22%23cbd5e1%22 font-size=%2240%22%3E🎬%3C/text%3E%3C/svg%3E'}" 
+                                             alt="${item.Title}" 
+                                             class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                                        <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                                        <div class="absolute bottom-0 left-0 right-0 p-4 transform translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+                                            <div class="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 rounded-lg text-center font-semibold">
+                                                ➕ Ajouter
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="p-4">
+                                        <h3 class="font-bold text-sm mb-1 line-clamp-2">${item.Title}</h3>
+                                        <p class="text-slate-400 text-xs">${item.Year} • ${item.Type === 'movie' ? 'Film' : 'Série'}</p>
+                                    </div>
+                                </div>
                             </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCollection() {
+            const items = appState.view === 'films' 
+                ? appState.collection.filter(i => i.Type === 'movie')
+                : appState.collection.filter(i => i.Type === 'series');
+
+            if (items.length === 0) {
+                return `
+                    <div class="text-center py-20 fade-in">
+                        <div class="text-8xl mb-6">${appState.view === 'films' ? '🎬' : '📺'}</div>
+                        <h2 class="text-3xl font-bold mb-4">Aucun ${appState.view === 'films' ? 'film' : 'série'}</h2>
+                        <p class="text-slate-400 text-lg mb-8">Commencez par rechercher et ajouter vos favoris !</p>
+                        <button onclick="appState.view='search';render()" 
+                                class="bg-gradient-to-r from-purple-600 to-pink-600 px-8 py-4 rounded-xl font-semibold hover:shadow-xl transition-all">
+                            🔍 Rechercher
+                        </button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+                    ${items.map((item, i) => `
+                        <div class="fade-in" style="animation-delay: ${i * 0.05}s">
+                            ${appState.view === 'films' ? renderMovieCard(item) : renderSeriesCard(item)}
                         </div>
                     `).join('')}
                 </div>
             `;
         }
 
-        function renderModal() {
-            const item = appState.selectedItem;
+        function renderMovieCard(item) {
             return `
-                <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" 
-                     onclick="if(event.target===this){appState.showModal=false;renderApp()}">
-                    <div class="bg-gray-800 rounded-xl p-6 max-w-md w-full">
-                        <div class="flex justify-between mb-4">
-                            <h3 class="text-lg md:text-xl font-bold">${item.Title}</h3>
-                            <button onclick="appState.showModal=false;renderApp()" class="text-gray-400">✕</button>
+                <div class="glass-effect rounded-2xl overflow-hidden group card-hover">
+                    <div class="relative aspect-[2/3]">
+                        <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22%3E%3Crect fill=%22%23334155%22 width=%22200%22 height=%22300%22/%3E%3C/svg%3E'}" 
+                             alt="${item.Title}" 
+                             class="w-full h-full object-cover" />
+                        <div class="absolute top-3 right-3">
+                            <button onclick="deleteItem('${item.imdbID}')" 
+                                    class="bg-red-500/90 backdrop-blur-sm p-2 rounded-full hover:bg-red-600 transition-all">
+                                🗑️
+                            </button>
                         </div>
-                        <img src="${item.Poster !== 'N/A' ? item.Poster : 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22%3E%3Crect fill=%22%23374151%22 width=%22200%22 height=%22300%22/%3E%3C/svg%3E'}" 
-                             alt="${item.Title}" class="w-full h-48 object-cover rounded mb-4" />
-                        <p class="text-gray-400 text-sm mb-4">${item.Year} • ${item.Type === 'movie' ? 'Film' : 'Série'}</p>
-                        <div class="mb-6">
-                            <p class="mb-2">Votre note :</p>
-                            <div class="flex gap-2">
-                                ${createStars(appState.modalRating, 32, true, 'setModalRating')}
+                        <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 to-transparent">
+                            <div class="flex items-center justify-between mb-2">
+                                ${item.ourRating ? 
+                                    `<div class="flex gap-1">${createStars(item.ourRating, 16)}</div>` :
+                                    `<span class="text-xs text-slate-400 italic">Non noté</span>`
+                                }
+                                <button onclick="openRatingPopup(${JSON.stringify(item).replace(/"/g, '&quot;')}, 'movie')"
+                                        class="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm hover:bg-white/30 transition-all">
+                                    ⭐ Noter
+                                </button>
                             </div>
                         </div>
-                        <button onclick="addToCollection()" 
-                                ${!appState.modalRating ? 'disabled' : ''}
-                                class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
-                            Ajouter
-                        </button>
                     </div>
-                </div>
-            `;
-        }
-
-        function setModalRating(rating) {
-            appState.modalRating = rating;
-            renderApp();
-        }
-
-        // Initialisation
-        loadCollection();
-        setInterval(loadCollection, 30000);
-    </script>
-</body>
-</html>
+                    <div class="p-4">
+                        <h3 class="font-bold mb-1 line-clamp-2">${item.Title}</h3>
+                        <p class="text-slate-400 text-sm">${item.Year}</p>
+                   
