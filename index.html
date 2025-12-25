@@ -1,1 +1,285 @@
-<!DOCTYPE html> <html lang="fr"> <head>     <meta charset="UTF-8">     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">     <meta name="theme-color" content="#0f172a">     <meta name="apple-mobile-web-app-capable" content="yes">     <title>WatchParty 🎬</title>     <script src="https://cdn.tailwindcss.com"></script>     <style>         @keyframes fadeIn {             from { opacity: 0; transform: translateY(10px); }             to { opacity: 1; transform: translateY(0); }         }         @keyframes fadeInScale {             from { opacity: 0; transform: scale(0.95); }             to { opacity: 1; transform: scale(1); }         }         @keyframes slideInUp {             from { opacity: 0; transform: translateY(100%); }             to { opacity: 1; transform: translateY(0); }         }         @keyframes shimmer {             0% { background-position: -1000px 0; }             100% { background-position: 1000px 0; }         }         .fade-in { animation: fadeIn 0.4s ease-out forwards; }         .fade-in-scale { animation: fadeInScale 0.3s ease-out forwards; }         .slide-up { animation: slideInUp 0.4s ease-out forwards; }         .card-hover {             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);         }         .card-hover:hover {             transform: translateY(-8px);             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);         }         .glass-effect {             background: rgba(30, 41, 59, 0.7);             backdrop-filter: blur(12px);             border: 1px solid rgba(255, 255, 255, 0.1);         }         .gradient-text {             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);             -webkit-background-clip: text;             -webkit-text-fill-color: transparent;         }         .shimmer {             background: linear-gradient(90deg, #1e293b 0%, #334155 50%, #1e293b 100%);             background-size: 1000px 100%;             animation: shimmer 2s infinite;         }         * { -webkit-tap-highlight-color: transparent; }         body { overscroll-behavior: contain; }         .star-btn {             transition: transform 0.2s, color 0.2s;         }         .star-btn:active {             transform: scale(1.2);         }     </style> </head> <body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white min-h-screen">     <div id="app"></div>      <script>         const firebaseConfig = {             apiKey: "AIzaSyBFN56hOHMO0yOOiKxFCr2hU6trRnqf3jQ",             databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app"         };          let appState = {             view: 'films',             collection: [],             searchQuery: '',             searchResults: [],             isSearching: false,             isLoading: true,             selectedItem: null,             showModal: false,             modalRating: 0,             showRatingPopup: false,             ratingItem: null,             ratingType: 'movie',             episodeData: null         };          async function loadCollection() {             appState.isLoading = true;             render();             try {                 const response = await fetch(firebaseConfig.databaseURL + '/collection.json');                 const data = await response.json();                 appState.collection = data || [];                 localStorage.setItem('cache', JSON.stringify(appState.collection));             } catch (error) {                 const cache = localStorage.getItem('cache');                 if (cache) appState.collection = JSON.parse(cache);             }             appState.isLoading = false;             render();         }          async function saveCollection() {             try {                 await fetch(firebaseConfig.databaseURL + '/collection.json', {                     method: 'PUT',                     body: JSON.stringify(appState.collection)                 });                 localStorage.setItem('cache', JSON.stringify(appState.collection));             } catch (error) {                 console.error('Erreur:', error);             }         }          async function searchMovies() {             if (!appState.searchQuery) return;             appState.isSearching = true;             appState.searchResults = [];             render();                          try {                 const response = await fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&s=${encodeURIComponent(appState.searchQuery)}`);                 const data = await response.json();                                  if (data.Response === 'True') {                     const promises = data.Search.slice(0, 12).map(item =>                         fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&i=${item.imdbID}`)                             .then(r => r.json())                     );                     appState.searchResults = await Promise.all(promises);                 }             } catch (error) {                 console.error('Erreur:', error);             }                          appState.isSearching = false;             render();         }          function openRatingPopup(item, type = 'movie', episodeData = null) {             appState.ratingItem = item;             appState.ratingType = type;             appState.episodeData = episodeData;             appState.modalRating = 0;             appState.showRatingPopup = true;             render();         }          function submitRating() {             if (!appState.modalRating) return;              const item = appState.ratingItem;              if (appState.ratingType === 'movie') {                 const exists = appState.collection.find(i => i.imdbID === item.imdbID);                 if (!exists) {                     const newItem = {                         imdbID: item.imdbID,                         Title: item.Title,                         Year: item.Year,                         Type: item.Type,                         Poster: item.Poster,                         Plot: item.Plot,                         totalSeasons: item.totalSeasons,                         ourRating: appState.modalRating,                         addedDate: new Date().toISOString(),                         seasons: item.Type === 'series' && item.totalSeasons ?                              Array.from({ length: parseInt(item.totalSeasons) }, (_, i) => ({                                 season: i + 1,                                 episodes: []                             })) : null                     };                     appState.collection.unshift(newItem);                 } else {                     exists.ourRating = appState.modalRating;                 }             } else if (appState.ratingType === 'episode') {                 const seriesItem = appState.collection.find(i => i.imdbID === item.imdbID);                 if (seriesItem && seriesItem.seasons) {                     const season = seriesItem.seasons[appState.episodeData.season - 1];                     const existingEp = season.episodes.find(e => e.episode === appState.episodeData.episode);                                          if (existingEp) {                         existingEp.rating = appState.modalRating;                     } else {                         season.episodes.push({                             episode: appState.episodeData.episode,                             rating: appState.modalRating,                             date: new Date().toISOString()                         });                         season.episodes.sort((a, b) => a.episode - b.episode);                     }                 }             }              saveCollection();             appState.showRatingPopup = false;             appState.modalRating = 0;             render();         }          function deleteItem(imdbID) {             if (confirm('Supprimer cet élément ?')) {                 appState.collection = appState.collection.filter(i => i.imdbID !== imdbID);                 saveCollection();                 render();             }         }          function createStars(rating, size = 24, clickable = false) {             let html = '';             for (let i = 1; i <= 5; i++) {                 const filled = i <= rating;                 const color = filled ? 'text-yellow-400' : 'text-slate-600';                 const click = clickable ? `onclick="appState.modalRating=${i};render()"` : '';                 html += `                     <button ${click} class="star-btn ${color} ${clickable ? 'cursor-pointer' : ''}" style="width:${size}px;height:${size}px;">                         <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">                             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>                         </svg>                     </button>                 `;             }<!DOCTYPE html> <html lang="fr"> <head>     <meta charset="UTF-8">     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">     <meta name="theme-color" content="#0f172a">     <meta name="apple-mobile-web-app-capable" content="yes">     <title>WatchParty 🎬</title>     <script src="https://cdn.tailwindcss.com"></script>     <style>         @keyframes fadeIn {             from { opacity: 0; transform: translateY(10px); }             to { opacity: 1; transform: translateY(0); }         }         @keyframes fadeInScale {             from { opacity: 0; transform: scale(0.95); }             to { opacity: 1; transform: scale(1); }         }         @keyframes slideInUp {             from { opacity: 0; transform: translateY(100%); }             to { opacity: 1; transform: translateY(0); }         }         @keyframes shimmer {             0% { background-position: -1000px 0; }             100% { background-position: 1000px 0; }         }         .fade-in { animation: fadeIn 0.4s ease-out forwards; }         .fade-in-scale { animation: fadeInScale 0.3s ease-out forwards; }         .slide-up { animation: slideInUp 0.4s ease-out forwards; }         .card-hover {             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);         }         .card-hover:hover {             transform: translateY(-8px);             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);         }         .glass-effect {             background: rgba(30, 41, 59, 0.7);             backdrop-filter: blur(12px);             border: 1px solid rgba(255, 255, 255, 0.1);         }         .gradient-text {             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);             -webkit-background-clip: text;             -webkit-text-fill-color: transparent;         }         .shimmer {             background: linear-gradient(90deg, #1e293b 0%, #334155 50%, #1e293b 100%);             background-size: 1000px 100%;             animation: shimmer 2s infinite;         }         * { -webkit-tap-highlight-color: transparent; }         body { overscroll-behavior: contain; }         .star-btn {             transition: transform 0.2s, color 0.2s;         }         .star-btn:active {             transform: scale(1.2);         }     </style> </head> <body class="bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 text-white min-h-screen">     <div id="app"></div>      <script>         const firebaseConfig = {             apiKey: "AIzaSyBFN56hOHMO0yOOiKxFCr2hU6trRnqf3jQ",             databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app"         };          let appState = {             view: 'films',             collection: [],             searchQuery: '',             searchResults: [],             isSearching: false,             isLoading: true,             selectedItem: null,             showModal: false,             modalRating: 0,             showRatingPopup: false,             ratingItem: null,             ratingType: 'movie',             episodeData: null         };          async function loadCollection() {             appState.isLoading = true;             render();             try {                 const response = await fetch(firebaseConfig.databaseURL + '/collection.json');                 const data = await response.json();                 appState.collection = data || [];                 localStorage.setItem('cache', JSON.stringify(appState.collection));             } catch (error) {                 const cache = localStorage.getItem('cache');                 if (cache) appState.collection = JSON.parse(cache);             }             appState.isLoading = false;             render();         }          async function saveCollection() {             try {                 await fetch(firebaseConfig.databaseURL + '/collection.json', {                     method: 'PUT',                     body: JSON.stringify(appState.collection)                 });                 localStorage.setItem('cache', JSON.stringify(appState.collection));             } catch (error) {                 console.error('Erreur:', error);             }         }          async function searchMovies() {             if (!appState.searchQuery) return;             appState.isSearching = true;             appState.searchResults = [];             render();                          try {                 const response = await fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&s=${encodeURIComponent(appState.searchQuery)}`);                 const data = await response.json();                                  if (data.Response === 'True') {                     const promises = data.Search.slice(0, 12).map(item =>                         fetch(`https://www.omdbapi.com/?apikey=b9a5e69d&i=${item.imdbID}`)                             .then(r => r.json())                     );                     appState.searchResults = await Promise.all(promises);                 }             } catch (error) {                 console.error('Erreur:', error);             }                          appState.isSearching = false;             render();         }          function openRatingPopup(item, type = 'movie', episodeData = null) {             appState.ratingItem = item;             appState.ratingType = type;             appState.episodeData = episodeData;             appState.modalRating = 0;             appState.showRatingPopup = true;             render();         }          function submitRating() {             if (!appState.modalRating) return;              const item = appState.ratingItem;              if (appState.ratingType === 'movie') {                 const exists = appState.collection.find(i => i.imdbID === item.imdbID);                 if (!exists) {                     const newItem = {                         imdbID: item.imdbID,                         Title: item.Title,                         Year: item.Year,                         Type: item.Type,                         Poster: item.Poster,                         Plot: item.Plot,                         totalSeasons: item.totalSeasons,                         ourRating: appState.modalRating,                         addedDate: new Date().toISOString(),                         seasons: item.Type === 'series' && item.totalSeasons ?                              Array.from({ length: parseInt(item.totalSeasons) }, (_, i) => ({                                 season: i + 1,                                 episodes: []                             })) : null                     };                     appState.collection.unshift(newItem);                 } else {                     exists.ourRating = appState.modalRating;                 }             } else if (appState.ratingType === 'episode') {                 const seriesItem = appState.collection.find(i => i.imdbID === item.imdbID);                 if (seriesItem && seriesItem.seasons) {                     const season = seriesItem.seasons[appState.episodeData.season - 1];                     const existingEp = season.episodes.find(e => e.episode === appState.episodeData.episode);                                          if (existingEp) {                         existingEp.rating = appState.modalRating;                     } else {                         season.episodes.push({                             episode: appState.episodeData.episode,                             rating: appState.modalRating,                             date: new Date().toISOString()                         });                         season.episodes.sort((a, b) => a.episode - b.episode);                     }                 }             }              saveCollection();             appState.showRatingPopup = false;             appState.modalRating = 0;             render();         }          function deleteItem(imdbID) {             if (confirm('Supprimer cet élément ?')) {                 appState.collection = appState.collection.filter(i => i.imdbID !== imdbID);                 saveCollection();                 render();             }         }          function createStars(rating, size = 24, clickable = false) {             let html = '';             for (let i = 1; i <= 5; i++) {                 const filled = i <= rating;                 const color = filled ? 'text-yellow-400' : 'text-slate-600';                 const click = clickable ? `onclick="appState.modalRating=${i};render()"` : '';                 html += `                     <button ${click} class="star-btn ${color} ${clickable ? 'cursor-pointer' : ''}" style="width:${size}px;height:${size}px;">                         <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24" fill="${filled ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2">                             <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>                         </svg>                     </button>                 `;             }
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#0f172a">
+    <title>WatchParty 🎬</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+        .glass-effect { background: rgba(30, 41, 59, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .gradient-text { background: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        /* Optimisation Mobile */
+        body { overscroll-behavior-y: contain; -webkit-tap-highlight-color: transparent; }
+        .card-hover { transition: transform 0.2s ease; }
+        @media (min-width: 768px) { .card-hover:hover { transform: translateY(-8px); } }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-[#0f172a] text-white min-h-screen font-sans selection:bg-purple-500/30">
+
+<div id="app"></div>
+
+<script>
+// CONFIGURATION (HTTPS Corrigé)
+const firebaseConfig = {
+    databaseURL: "https://watchpartychou-default-rtdb.europe-west1.firebasedatabase.app"
+};
+const OMDB_API = "https://www.omdbapi.com/?apikey=b9a5e69d";
+
+let appState = {
+    view: 'films',
+    collection: [],
+    searchQuery: '',
+    searchResults: [],
+    isSearching: false,
+    isLoading: true,
+    showRatingPopup: false,
+    ratingItem: null,
+    ratingType: 'movie',
+    modalRating: 0,
+    episodeData: null
+};
+
+// PERSISTENCE & CHARGEMENT
+async function loadCollection() {
+    try {
+        const response = await fetch(`${firebaseConfig.databaseURL}/collection.json`);
+        const data = await response.json();
+        appState.collection = data || [];
+        localStorage.setItem('wp_cache', JSON.stringify(appState.collection));
+    } catch (e) {
+        const cache = localStorage.getItem('wp_cache');
+        if (cache) appState.collection = JSON.parse(cache);
+    }
+    appState.isLoading = false;
+    render();
+}
+
+async function saveCollection() {
+    try {
+        await fetch(`${firebaseConfig.databaseURL}/collection.json`, {
+            method: 'PUT',
+            body: JSON.stringify(appState.collection)
+        });
+        localStorage.setItem('wp_cache', JSON.stringify(appState.collection));
+    } catch (e) { console.error("Erreur de sauvegarde:", e); }
+}
+
+// RECHERCHE (Correction HTTPS)
+async function searchMovies() {
+    if (!appState.searchQuery.trim()) return;
+    appState.isSearching = true;
+    render();
+    try {
+        const response = await fetch(`${OMDB_API}&s=${encodeURIComponent(appState.searchQuery)}`);
+        const data = await response.json();
+        if (data.Response === 'True') {
+            const details = await Promise.all(
+                data.Search.slice(0, 12).map(item => 
+                    fetch(`${OMDB_API}&i=${item.imdbID}`).then(r => r.json())
+                )
+            );
+            appState.searchResults = details;
+        } else {
+            appState.searchResults = [];
+        }
+    } catch (e) { alert("Erreur de connexion à l'API"); }
+    appState.isSearching = false;
+    render();
+}
+
+// ACTIONS
+function openRatingPopup(item, type = 'movie', episodeData = null) {
+    appState.ratingItem = item;
+    appState.ratingType = type;
+    appState.episodeData = episodeData;
+    appState.modalRating = 0;
+    appState.showRatingPopup = true;
+    render();
+}
+
+function submitRating() {
+    const item = appState.ratingItem;
+    if (appState.ratingType === 'movie') {
+        const idx = appState.collection.findIndex(i => i.imdbID === item.imdbID);
+        if (idx === -1) {
+            appState.collection.unshift({
+                ...item,
+                ourRating: appState.modalRating,
+                seasons: item.Type === 'series' ? Array.from({length: parseInt(item.totalSeasons) || 0}, (_, i) => ({season: i+1, episodes: []})) : null
+            });
+        } else {
+            appState.collection[idx].ourRating = appState.modalRating;
+        }
+    } else {
+        const series = appState.collection.find(i => i.imdbID === item.imdbID);
+        if (series?.seasons) {
+            const s = series.seasons[appState.episodeData.season - 1];
+            const epIdx = s.episodes.findIndex(e => e.episode === appState.episodeData.episode);
+            if (epIdx > -1) s.episodes[epIdx].rating = appState.modalRating;
+            else s.episodes.push({episode: appState.episodeData.episode, rating: appState.modalRating});
+        }
+    }
+    saveCollection();
+    appState.showRatingPopup = false;
+    render();
+}
+
+function deleteItem(id) {
+    if(confirm("Supprimer de la collection ?")) {
+        appState.collection = appState.collection.filter(i => i.imdbID !== id);
+        saveCollection();
+        render();
+    }
+}
+
+// RENDU
+function createStars(rating, size=14, interactive=false) {
+    return Array.from({length: 5}, (_, i) => {
+        const active = i < rating;
+        return `<span onclick="${interactive ? `appState.modalRating=${i+1};render()` : ''}" 
+            class="${interactive ? 'cursor-pointer px-1' : ''} ${active ? 'text-yellow-400' : 'text-slate-600'}" 
+            style="font-size: ${size}px">★</span>`;
+    }).join('');
+}
+
+function render() {
+    const root = document.getElementById('app');
+    if (appState.isLoading) {
+        root.innerHTML = `<div class="h-screen flex items-center justify-center flex-col gap-4">
+            <div class="text-6xl animate-bounce">🎬</div>
+            <div class="h-1 w-48 bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-purple-500 animate-[shimmer_2s_infinite]"></div>
+            </div>
+        </div>`;
+        return;
+    }
+
+    const filtered = appState.collection.filter(i => appState.view === 'films' ? i.Type === 'movie' : i.Type === 'series');
+
+    root.innerHTML = `
+        <header class="glass-effect sticky top-0 z-40 px-4 py-3 md:py-4">
+            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                <h1 class="text-xl md:text-2xl font-bold gradient-text">WatchParty 🎬</h1>
+                <button onclick="loadCollection()" class="p-2 hover:bg-white/10 rounded-full transition-colors text-lg">🔄</button>
+            </div>
+        </header>
+
+        <nav class="max-w-6xl mx-auto px-4 mt-6 overflow-x-auto no-scrollbar">
+            <div class="flex gap-2 min-w-max">
+                ${['films', 'series', 'search'].map(v => `
+                    <button onclick="appState.view='${v}';render()" 
+                        class="px-5 py-2.5 rounded-full font-medium transition-all text-sm md:text-base
+                        ${appState.view === v ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/30' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}">
+                        ${v === 'films' ? '🎬 Films' : v === 'series' ? '📺 Séries' : '🔍 Recherche'}
+                    </button>
+                `).join('')}
+            </div>
+        </nav>
+
+        <main class="max-w-6xl mx-auto px-4 py-8">
+            ${appState.view === 'search' ? renderSearchView() : renderCollectionView(filtered)}
+        </main>
+
+        ${appState.showRatingPopup ? renderPopup() : ''}
+    `;
+}
+
+function renderSearchView() {
+    return `
+        <div class="fade-in max-w-2xl mx-auto mb-10">
+            <div class="flex gap-2">
+                <input type="text" id="searchInput" value="${appState.searchQuery}" 
+                    oninput="appState.searchQuery=this.value" 
+                    onkeypress="if(event.key==='Enter')searchMovies()"
+                    placeholder="Titre du film..." 
+                    class="w-full bg-slate-800/50 border border-white/10 rounded-2xl px-5 py-3.5 focus:outline-none focus:border-purple-500 transition-all">
+                <button onclick="searchMovies()" class="bg-purple-600 px-6 rounded-2xl font-bold">OK</button>
+            </div>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            ${appState.searchResults.map(item => `
+                <div class="glass-effect rounded-2xl overflow-hidden fade-in card-hover" onclick='openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")}, "movie")'>
+                    <img src="${item.Poster !== 'N/A' ? item.Poster : 'https://via.placeholder.com/300x450?text=No+Poster'}" class="aspect-[2/3] object-cover w-full">
+                    <div class="p-3">
+                        <h4 class="text-xs font-bold truncate">${item.Title}</h4>
+                        <p class="text-[10px] text-slate-400">${item.Year}</p>
+                    </div>
+                </div>
+            `).join('')}
+        </div>
+        ${appState.isSearching ? '<p class="text-center mt-10 animate-pulse text-slate-400">Recherche en cours...</p>' : ''}
+    `;
+}
+
+function renderCollectionView(items) {
+    if (items.length === 0) return `<div class="text-center py-20 opacity-50"><p class="text-xl">Ta collection est vide 🍿</p></div>`;
+    
+    return `<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+        ${items.map(item => `
+            <div class="glass-effect rounded-2xl overflow-hidden flex flex-col fade-in card-hover group">
+                <div class="relative">
+                    <img src="${item.Poster}" class="aspect-[2/3] object-cover w-full">
+                    <button onclick="deleteItem('${item.imdbID}')" class="absolute top-2 right-2 bg-black/50 p-2 rounded-full hover:bg-red-500 transition-colors">🗑️</button>
+                    <div class="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-slate-900 to-transparent">
+                        <div class="flex gap-0.5">${createStars(item.ourRating)}</div>
+                    </div>
+                </div>
+                <div class="p-4 flex-1">
+                    <h3 class="font-bold text-sm leading-tight mb-1 line-clamp-2">${item.Title}</h3>
+                    <p class="text-xs text-slate-400 mb-3">${item.Year}</p>
+                    ${item.Type === 'series' ? renderSeasons(item) : `
+                        <button onclick='openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")})' class="w-full py-2 bg-white/5 rounded-lg text-xs hover:bg-white/10 transition-all">Noter</button>
+                    `}
+                </div>
+            </div>
+        `).join('')}
+    </div>`;
+}
+
+function renderSeasons(item) {
+    return `<div class="space-y-1 mt-auto">
+        ${item.seasons?.slice(0,3).map(s => `
+            <details class="text-[11px] bg-white/5 rounded-md">
+                <summary class="p-2 cursor-pointer opacity-70">Saison ${s.season} (${s.episodes.length} ép.)</summary>
+                <div class="p-2 border-t border-white/5 space-y-2">
+                    <div class="flex gap-1">
+                        <input type="number" id="ep-input-${item.imdbID}-${s.season}" placeholder="N°" class="w-12 bg-slate-900 rounded px-1">
+                        <button onclick="const n=document.getElementById('ep-input-${item.imdbID}-${s.season}').value; if(n) openRatingPopup(${JSON.stringify(item).replace(/'/g, "&apos;")}, 'episode', {season:${s.season}, episode:parseInt(n)})" class="flex-1 bg-purple-600 rounded py-1">Note</button>
+                    </div>
+                    ${s.episodes.map(e => `<div class="flex justify-between items-center text-[10px]"><span>Ép. ${e.episode}</span><span>${createStars(e.rating, 8)}</span></div>`).join('')}
+                </div>
+            </details>
+        `).join('')}
+    </div>`;
+}
+
+function renderPopup() {
+    return `
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md fade-in">
+            <div class="glass-effect w-full max-w-xs rounded-3xl p-6 text-center animate-scaleIn">
+                <h2 class="text-lg font-bold mb-1">${appState.ratingItem.Title}</h2>
+                <p class="text-xs text-purple-400 mb-6">${appState.episodeData ? `Saison ${appState.episodeData.season} • Épisode ${appState.episodeData.episode}` : 'Note générale'}</p>
+                <div class="flex justify-center gap-1 mb-8">${createStars(appState.modalRating, 32, true)}</div>
+                <div class="flex gap-3">
+                    <button onclick="appState.showRatingPopup=false;render()" class="flex-1 py-3 rounded-xl bg-slate-800 font-bold">Annuler</button>
+                    <button onclick="submitRating()" class="flex-1 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 font-bold shadow-lg">Valider</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// INIT
+loadCollection();
+</script>
+</body>
+</html>
